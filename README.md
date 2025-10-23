@@ -1,4 +1,4 @@
-#Click & Collect Notification System
+# Click & Collect Notification System
 
 A real-time notification system for retail click & collect services. Customers scan barcodes at collection points, and staff receive instant notifications on their devices.
 
@@ -22,9 +22,9 @@ click-and-collect/
 │   ├── database.py          # Database configuration
 │   ├── requirements.txt     # Python dependencies
 │   ├── .env.example         # Environment template
-│   └── .env                 # Your config (create this)
-├── frontend/                # (Coming soon)
-└── README.md               # This file
+│   └── .env                 
+├── frontend/                
+└── README.md               
 ```
 
 ## Quick Start
@@ -167,12 +167,10 @@ print(response.json())
 
 ## Database
 
-### Default: SQLite
+### SQLite
 - File: `collections.db` (created automatically)
-- Perfect for development and testing
-- Zero configuration required
 
-### Production: PostgreSQL
+### PostgreSQL
 
 1. Install PostgreSQL driver:
 ```bash
@@ -219,7 +217,7 @@ PORT=8000
 - **pydantic** - Data validation
 - **python-dotenv** - Environment variables
 
-## 🛠️ Development
+## Development
 
 ### Adding New Features
 
@@ -256,8 +254,5 @@ For production:
 
 This is a side project / learning project. Feel free to use and modify.
 
-## Contributing
-
-This is a personal side project, but suggestions welcome!
 
 
