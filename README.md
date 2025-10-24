@@ -4,7 +4,7 @@ A real-time notification system for retail click & collect services. Customers s
 
 ## Project Overview
 
-**Use Case**: Customer comes to Click & Collect counter → Scans barcode → Staff device receives real-time notification → Staff retrieves parcel
+**Use Case**: Customer orders → Customer comes to Click & Collect counter → Scans barcode → Staff device receives real-time notification → Staff retrieves parcel
 
 **Tech Stack**:
 - **Backend**: Python, FastAPI, Socket.IO
