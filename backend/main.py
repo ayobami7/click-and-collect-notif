@@ -1,14 +1,22 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from datetime import datetime
+from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import socketio
+import json
 import uvicorn
+import os
+from dotenv import load_dotenv
+
 
 from database import get_db, init_db
 from models import Collection, CollectionStatus
+from utils import generate_barcode, generate_order_number, validate_barcode
+
+load_dotenv()
 
 # Socket.IO setup
 sio = socketio.AsyncServer(
@@ -32,6 +40,17 @@ app.add_middleware(
 socket_app = socketio.ASGIApp(sio, app)
 
 # Pydantic models
+class OrderItem(BaseModel):
+    name: str
+    quantity: int
+    
+class OrderRequest(BaseModel):
+    customer_name: str
+    customer_email: Optional[EmailStr] = None
+    customer_phone: Optional[str] = None
+    items: Optional[List[OrderItem]] = None
+    order_number: Optional[str] = None
+
 class CollectionRequest(BaseModel):
     customer_name: str
     barcode: str
@@ -77,42 +96,156 @@ async def root():
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+@app.post("/api/orders")
+async def create_order(
+    request: OrderRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    CREATE ORDER - When customer places an order
+    This generates a barcode and creates the order in the system
+    """
+    try:
+        # Generate unique barcode
+        barcode = generate_barcode()
+        
+        # Generate order number if not provided
+        order_number = request.order_number or generate_order_number()
+        
+        # Convert items to JSON string if provided
+        items_json = None
+        if request.items:
+            items_json = json.dumps([item.dict() for item in request.items])
+        
+        # Create order in database
+        order = Collection(
+            customer_name=request.customer_name,
+            customer_email=request.customer_email,
+            customer_phone=request.customer_phone,
+            barcode=barcode,
+            order_number=order_number,
+            items=items_json,
+            status=CollectionStatus.PENDING.value  # Order is being prepared
+        )
+        
+        db.add(order)
+        await db.commit()
+        await db.refresh(order)
+        
+        print(f"✅ New order created: {order_number} for {request.customer_name}")
+        print(f"   Barcode: {barcode}")
+        
+        return {
+            "id": order.id,
+            "customer_name": order.customer_name,
+            "customer_email": order.customer_email,
+            "barcode": barcode,
+            "order_number": order_number,
+            "items": request.items,
+            "status": order.status,
+            "timestamp": order.created_at.isoformat(),
+            "message": "Order created successfully. Customer will receive barcode for collection."
+        }
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/orders/{order_id}/ready")
+async def mark_order_ready(
+    order_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    MARK ORDER READY - When staff prepares the order
+    Changes status from PENDING to READY
+    """
+    result = await db.execute(
+        select(Collection).where(Collection.id == order_id)
+    )
+    order = result.scalar_one_or_none()
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    order.status = CollectionStatus.READY.value
+    await db.commit()
+    await db.refresh(order)
+    
+    # Optionally notify customer via email/SMS that order is ready
+    print(f"✅ Order {order.order_number} is ready for collection")
+    
+    return {
+        **order.to_dict(),
+        "message": "Order marked as ready for collection"
+    }
+
 @app.post("/api/collect", response_model=CollectionResponse)
+# this is where the customer creates a collection request
 async def create_collection(
     request: CollectionRequest,
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # Create new collection in database
-        collection = Collection(
-            customer_name=request.customer_name,
-            barcode=request.barcode,
-            status=CollectionStatus.PENDING.value
+        # Validate barcode format
+        if not validate_barcode(request.barcode):
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid barcode format"
+            )
+        
+        # Find order by barcode
+        result = await db.execute(
+            select(Collection).where(Collection.barcode == request.barcode)
         )
+        order = result.scalar_one_or_none()
         
-        db.add(collection)
-        await db.commit()
-        await db.refresh(collection)
+        if not order:
+            raise HTTPException(
+                status_code=404, 
+                detail="Order not found. Please check your barcode."
+            )
         
-        # Emit real-time notification to all connected staff devices
+        # Check if order is ready
+        if order.status == CollectionStatus.PENDING.value:
+            raise HTTPException(
+                status_code=400,
+                detail="Order is still being prepared. Please wait."
+            )
+        
+        if order.status == CollectionStatus.COLLECTED.value:
+            raise HTTPException(
+                status_code=400,
+                detail="This order has already been collected."
+            )
+        
+        # Verify customer name matches
+        if order.customer_name.lower() != request.customer_name.lower():
+            print(f"⚠️  Name mismatch: Expected '{order.customer_name}', got '{request.customer_name}'")
+        
+        # Emit real-time notification to staff devices
         await sio.emit('new_collection', {
-            "id": collection.id,
-            "customer_name": collection.customer_name,
-            "barcode": collection.barcode,
-            "timestamp": collection.created_at.isoformat(),
-            "message": f"{collection.customer_name} is waiting for collection"
+            "id": order.id,
+            "customer_name": order.customer_name,
+            "barcode": order.barcode,
+            "order_number": order.order_number,
+            "items": order.items,
+            "timestamp": datetime.now().isoformat(),
+            "message": f"{order.customer_name} is waiting at collection point"
         })
         
-        print(f"New collection: {collection.customer_name} - {collection.barcode}")
+        print(f"🔔 Collection notification: {order.customer_name} - Order {order.order_number}")
         
         return {
-            "id": collection.id,
-            "customer_name": collection.customer_name,
-            "barcode": collection.barcode,
-            "timestamp": collection.created_at.isoformat(),
-            "status": collection.status
+            "id": order.id,
+            "customer_name": order.customer_name,
+            "barcode": order.barcode,
+            "timestamp": order.created_at.isoformat(),
+            "status": order.status
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -171,13 +304,15 @@ async def complete_collection(
         raise HTTPException(status_code=404, detail="Collection not found")
     
     collection.status = CollectionStatus.COMPLETED.value
+    collection.collected_at = datetime.now()
     await db.commit()
     await db.refresh(collection)
     
     # Notify staff that collection is complete
     await sio.emit('collection_completed', {
         "id": collection.id,
-        "customer_name": collection.customer_name
+        "customer_name": collection.customer_name,
+        "order_number": collection.order_number
     })
     
     return collection.to_dict()
@@ -203,7 +338,7 @@ async def delete_collection(
 if __name__ == "__main__":
     uvicorn.run(
         "main:socket_app",
-        host="0.0.0.0",
-        port=8000,
+        host=os.getenv("HOST", "localhost"),
+        port=int(os.getenv("PORT", 8000)),
         reload=True
     )
