@@ -221,7 +221,7 @@ async def create_collection(
         
         # Verify customer name matches
         if order.customer_name.lower() != request.customer_name.lower():
-            print(f"⚠️  Name mismatch: Expected '{order.customer_name}', got '{request.customer_name}'")
+            print(f"Name mismatch: Expected '{order.customer_name}', got '{request.customer_name}'")
         
         # Emit real-time notification to staff devices
         await sio.emit('new_collection', {
@@ -234,7 +234,7 @@ async def create_collection(
             "message": f"{order.customer_name} is waiting at collection point"
         })
         
-        print(f"🔔 Collection notification: {order.customer_name} - Order {order.order_number}")
+        print(f"Collection notification: {order.customer_name} - Order {order.order_number}")
         
         return {
             "id": order.id,
