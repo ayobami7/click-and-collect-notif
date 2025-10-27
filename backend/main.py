@@ -85,6 +85,8 @@ async def root():
         "message": "Click & Collect Notification API",
         "version": "1.0.0",
         "endpoints": {
+            "POST /api/orders": "Create new order (generates barcode)",
+            "PATCH /api/orders/{id}/ready": "Mark order as ready for collection",
             "POST /api/collect": "Customer creates collection request",
             "GET /api/collections": "Get all collections",
             "PATCH /api/collections/{id}/complete": "Mark collection as complete",
